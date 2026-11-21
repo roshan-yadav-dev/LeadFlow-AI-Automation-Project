@@ -24,6 +24,8 @@ from app.services.sheets_service import (
     update_lead_crm_row,
     update_lead_ai_response,
 )
+from app.services import gmail_service
+from app.services.gmail_service import send_email
 
 logger = logging.getLogger("leadflow")
 _email_adapter = TypeAdapter(EmailStr)
@@ -239,6 +241,172 @@ def compute_payload_hash(payload_dict: dict[str, Any]) -> str:
     """Compute deterministic SHA-256 hash of normalized payload data."""
     serialized = json.dumps(payload_dict, sort_keys=True, default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def build_admin_notification_content(
+    lead_id: str,
+    normalized: dict[str, Any],
+) -> tuple[str, str, str]:
+    """
+    Build email subject, plain text body, and HTML body for admin lead notification.
+    Must include all 10 required fields:
+    1. Lead ID
+    2. Full name
+    3. Email address
+    4. Phone number
+    5. Company name
+    6. Interested service
+    7. Requirements
+    8. Budget range
+    9. Preferred contact method
+    10. Communication consent
+    """
+    lead_name = (normalized.get("name") or "New Lead").replace("\r", " ").replace("\n", " ").strip()
+    subject = f"New Lead Received – {lead_name}"
+
+    email = normalized.get("email") or "Not provided"
+    phone = normalized.get("phone") or "Not provided"
+    company = normalized.get("company") or "Not provided"
+    service = normalized.get("service") or "General Inquiry"
+    requirements = normalized.get("requirements") or "Not provided"
+    budget = normalized.get("budget") or "Not provided"
+    pref_contact = normalized.get("preferred_contact") or "email"
+    consent_val = normalized.get("consent")
+    consent_str = "Granted (Yes)" if consent_val else "Not Granted (No)"
+
+    plain_body = f"""New lead received via Google Forms:
+
+- Lead ID: {lead_id}
+- Full Name: {lead_name}
+- Email Address: {email}
+- Phone Number: {phone}
+- Company Name: {company}
+- Interested Service: {service}
+- Requirements:
+{requirements}
+- Budget Range: {budget}
+- Preferred Contact Method: {pref_contact}
+- Communication Consent: {consent_str}
+
+Please review this lead in the LeadFlow AI Dashboard.
+"""
+
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; color: #333333; line-height: 1.5;">
+  <h2 style="color: #1a73e8; margin-bottom: 16px;">New Lead Received</h2>
+  <table style="width: 100%; max-width: 600px; border-collapse: collapse; margin-bottom: 20px;">
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold; width: 35%;">Lead ID:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{lead_id}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Full Name:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{lead_name}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Email Address:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><a href="mailto:{email}">{email}</a></td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Phone Number:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{phone}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Company Name:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{company}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Interested Service:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{service}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Budget Range:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{budget}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Preferred Contact Method:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{pref_contact}</td></tr>
+    <tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; font-weight: bold;">Communication Consent:</td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">{consent_str}</td></tr>
+  </table>
+  <div style="margin-top: 16px;">
+    <strong>Requirements:</strong>
+    <p style="background: #f8f9fa; padding: 12px; border-radius: 4px; white-space: pre-wrap;">{requirements}</p>
+  </div>
+</body>
+</html>"""
+
+    return subject, plain_body, html_body
+
+
+def notify_admin_of_new_lead(
+    lead_id: str,
+    normalized: dict[str, Any],
+    submission_id: str | None = None,
+    store=None,
+    send_fn=None,
+) -> dict[str, Any]:
+    """
+    Send an automatic email notification to the administrator when a new lead is submitted.
+
+    Guarantees:
+    - Only sends if ADMIN_NOTIFICATION_EMAIL is configured.
+    - Uses existing Gmail API integration.
+    - Idempotent: checks store to ensure no duplicate notification for this lead/submission.
+    - Fail-safe: handles any exceptions and returns status dict; never raises or fails caller.
+    - SAFETY: Sends ONLY to settings.ADMIN_NOTIFICATION_EMAIL, NEVER to the customer.
+    """
+    admin_email = (settings.ADMIN_NOTIFICATION_EMAIL or "").strip()
+    if not admin_email:
+        logger.debug("ADMIN_NOTIFICATION_EMAIL not configured; skipping admin notification for lead %s", lead_id)
+        return {"status": "skipped", "reason": "ADMIN_NOTIFICATION_EMAIL_NOT_CONFIGURED"}
+
+    active_store = store or automation_store
+    active_send = send_fn or gmail_service.send_email
+
+    idempotency_key = f"admin_notif_lead_{lead_id}"
+
+    # 1. Check idempotency: already notified?
+    try:
+        if active_store.has_admin_notification(idempotency_key) or active_store.has_admin_notification_for_lead(lead_id):
+            logger.info("Admin notification already sent for lead %s (idempotency key %s)", lead_id, idempotency_key)
+            return {"status": "duplicate_skipped", "idempotency_key": idempotency_key}
+    except Exception as exc:
+        logger.warning("Failed checking admin notification idempotency for lead %s: %s", lead_id, exc)
+
+    # 2. Build email content
+    subject, plain_body, html_body = build_admin_notification_content(lead_id, normalized)
+
+    # 3. Send email to admin
+    try:
+        result = active_send(
+            to_email=admin_email,
+            subject=subject,
+            body=plain_body,
+            html_body=html_body,
+        )
+    except Exception as exc:
+        logger.exception("Unexpected exception sending admin notification for lead %s: %s", lead_id, exc)
+        return {
+            "status": "failed",
+            "error": str(exc),
+            "lead_id": lead_id,
+        }
+
+    if not isinstance(result, dict) or not result.get("success"):
+        err = (
+            result.get("error_message") or result.get("error_code")
+            if isinstance(result, dict)
+            else "Unknown error"
+        )
+        logger.error("Failed to send admin notification for lead %s: %s", lead_id, err)
+        return {
+            "status": "failed",
+            "error": str(err),
+            "lead_id": lead_id,
+        }
+
+    message_id = result.get("message_id")
+
+    # 4. Record notification in store for durable idempotency
+    try:
+        active_store.record_admin_notification(
+            lead_id=lead_id,
+            submission_id=submission_id,
+            recipient=admin_email,
+            subject=subject,
+            message_id=message_id,
+            status="SENT",
+            idempotency_key=idempotency_key,
+        )
+        logger.info("Admin notification recorded successfully for lead %s (msg id: %s)", lead_id, message_id)
+    except Exception as exc:
+        logger.warning("Failed to record admin notification for lead %s: %s", lead_id, exc)
+
+    return {
+        "status": "sent",
+        "recipient": admin_email,
+        "message_id": message_id,
+        "lead_id": lead_id,
+    }
 
 
 def process_form_submission(
@@ -525,6 +693,21 @@ def process_form_submission(
         )
     except Exception:
         logger.exception("Failed to emit LEAD_CREATED event for %s", lead_id)
+
+    # Step 8: Automatic Admin Email Notification (Fail-safe, Idempotent)
+    # Guarantees:
+    # - Sends ONLY to administrator via ADMIN_NOTIFICATION_EMAIL.
+    # - NEVER automatically sends to customer.
+    # - Notification failure will NOT fail the lead submission.
+    try:
+        notify_admin_of_new_lead(
+            lead_id=lead_id,
+            normalized=normalized,
+            submission_id=submission_id,
+            store=active_store,
+        )
+    except Exception:
+        logger.exception("Unexpected error in admin notification for lead %s", lead_id)
 
     return {
         "status": "success" if not sheets_sync_failed else "accepted",

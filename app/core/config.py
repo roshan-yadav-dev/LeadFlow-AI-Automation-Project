@@ -22,6 +22,7 @@ class Settings:
     GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     GROQ_TIMEOUT = int(os.getenv("GROQ_TIMEOUT", "30000"))
     GROQ_MAX_RETRIES = int(os.getenv("GROQ_MAX_RETRIES", "2"))
+    GROQ_MAX_COMPLETION_TOKENS = int(os.getenv("GROQ_MAX_COMPLETION_TOKENS", "2048"))
 
     # Google Sheets Configuration
     GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
@@ -147,6 +148,9 @@ class Settings:
     AUTOMATION_DEFAULT_TIMEZONE = os.getenv(
         "AUTOMATION_DEFAULT_TIMEZONE", "Asia/Kolkata"
     )
+
+    # Admin Notification Configuration
+    ADMIN_NOTIFICATION_EMAIL = os.getenv("ADMIN_NOTIFICATION_EMAIL", "").strip() or None
 
     # Dashboard & Frontend Configuration
     DASHBOARD_USERNAME = os.getenv("DASHBOARD_USERNAME", "admin")

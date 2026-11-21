@@ -392,6 +392,35 @@ class AutomationStore:
                 """
             )
 
+            # 11. Admin Notifications (Form Intake Notification Idempotency)
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_notifications (
+                    id TEXT PRIMARY KEY,
+                    lead_id TEXT NOT NULL,
+                    submission_id TEXT DEFAULT NULL,
+                    recipient TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    message_id TEXT DEFAULT NULL,
+                    status TEXT NOT NULL DEFAULT 'SENT',
+                    idempotency_key TEXT UNIQUE,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_admin_notifications_lead
+                ON admin_notifications(lead_id)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_admin_notifications_idem
+                ON admin_notifications(idempotency_key)
+                """
+            )
+
             # Additive Migrations: check and add missing columns
             task_cols = {
                 row["name"]
@@ -1206,6 +1235,13 @@ class AutomationStore:
                 )
         except sqlite3.IntegrityError as exc:
             if idempotency_key and "idempotency_key" in str(exc).lower():
+                with self._connect() as read_conn:
+                    row = read_conn.execute(
+                        "SELECT * FROM approval_requests WHERE idempotency_key = ?",
+                        (idempotency_key,),
+                    ).fetchone()
+                    if row:
+                        return self._row_to_approval(row)
                 raise DuplicateIdempotencyKeyError(
                     f"Duplicate idempotency key '{idempotency_key}'"
                 ) from exc
@@ -2017,6 +2053,95 @@ class AutomationStore:
                 "email_drafts_sent": _count("email_drafts", "WHERE status = 'SENT'"),
                 "email_drafts_failed": _count("email_drafts", "WHERE status = 'FAILED'"),
             }
+
+    # --- 11. Admin Notifications ---
+    def has_admin_notification(self, idempotency_key: str) -> bool:
+        if not idempotency_key:
+            return False
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM admin_notifications WHERE idempotency_key = ? LIMIT 1",
+                (idempotency_key,),
+            ).fetchone()
+            return row is not None
+
+    def has_admin_notification_for_lead(self, lead_id: str) -> bool:
+        if not lead_id:
+            return False
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM admin_notifications WHERE lead_id = ? AND status = 'SENT' LIMIT 1",
+                (lead_id,),
+            ).fetchone()
+            return row is not None
+
+    def record_admin_notification(
+        self,
+        lead_id: str,
+        recipient: str,
+        subject: str,
+        submission_id: str | None = None,
+        message_id: str | None = None,
+        status: str = "SENT",
+        idempotency_key: str | None = None,
+    ) -> dict:
+        notif_id = _generate_id("notif")
+        now = _utc_now()
+        with self._connect() as connection:
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO admin_notifications (
+                        id, lead_id, submission_id, recipient, subject,
+                        message_id, status, idempotency_key, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        notif_id,
+                        lead_id,
+                        submission_id,
+                        recipient.strip().lower(),
+                        subject.strip(),
+                        message_id,
+                        status,
+                        idempotency_key,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                if idempotency_key and "unique" in str(exc).lower():
+                    row = connection.execute(
+                        "SELECT * FROM admin_notifications WHERE idempotency_key = ?",
+                        (idempotency_key,),
+                    ).fetchone()
+                    if row:
+                        return dict(row)
+                raise
+        return {
+            "id": notif_id,
+            "lead_id": lead_id,
+            "submission_id": submission_id,
+            "recipient": recipient,
+            "subject": subject,
+            "message_id": message_id,
+            "status": status,
+            "idempotency_key": idempotency_key,
+            "created_at": now,
+        }
+
+    def list_admin_notifications(
+        self,
+        lead_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        where = "WHERE lead_id = ?" if lead_id else ""
+        params = [lead_id, limit] if lead_id else [limit]
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM admin_notifications {where} ORDER BY created_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
 
 
 # Default singleton instance pointing to settings

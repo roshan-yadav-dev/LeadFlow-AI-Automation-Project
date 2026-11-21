@@ -1306,6 +1306,41 @@ class AutomationService:
         )
 
         if submission_id:
+            try:
+                draft_idem_key = f"draft_sub_{submission_id}"
+                draft = self.store.create_email_draft(
+                    lead_id=lead_id,
+                    submission_id=submission_id,
+                    recipient=normalized.get("email") or lead_obj.email,
+                    subject=ai_result.subject,
+                    body=ai_result.body,
+                    preferred_contact=normalized.get("preferred_contact") or "email",
+                    consent=normalized.get("consent", False),
+                    status="PENDING",
+                    idempotency_key=draft_idem_key,
+                )
+                appr_idem_key = f"appr_draft_{draft['id']}"
+                appr = self.store.create_approval_request(
+                    lead_id=lead_id,
+                    action_type="SEND_EMAIL",
+                    action_payload={
+                        "draft_id": draft["id"],
+                        "lead_id": lead_id,
+                        "recipient": normalized.get("email") or lead_obj.email,
+                        "to_email": normalized.get("email") or lead_obj.email,
+                        "subject": ai_result.subject,
+                        "body": ai_result.body,
+                        "preferred_contact": normalized.get("preferred_contact") or "email",
+                        "consent": normalized.get("consent", False),
+                    },
+                    requested_by="google_forms_ai",
+                    idempotency_key=appr_idem_key,
+                )
+                self.store.update_email_draft(draft["id"], approval_id=appr["id"])
+            except Exception:
+                logger.exception("Failed creating draft/approval during Groq retry for %s", lead_id)
+
+        if submission_id:
             self.store.update_lead_submission(
                 submission_id=submission_id,
                 processing_status="COMPLETED",

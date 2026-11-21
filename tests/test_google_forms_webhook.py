@@ -599,3 +599,245 @@ def test_16_existing_lead_intake_endpoint_regression(client, auth_headers, monke
     assert res.status_code == 201
     assert res.json()["lead_id"] == "LF-EXISTING-ROUTE"
     assert res.json()["status"] == "NEW"
+
+
+# ---------------------------------------------------------------------------
+# Test 17: Admin Email Notification Sent On New Form Submission
+# ---------------------------------------------------------------------------
+def test_17_admin_notification_sent_on_new_form_submission(
+    client, auth_headers, mock_services, temp_store, monkeypatch
+):
+    admin_addr = "notifications@acmeagency.com"
+    monkeypatch.setattr(settings, "ADMIN_NOTIFICATION_EMAIL", admin_addr)
+
+    payload = {
+        "submission_id": "sheet_admin_notif_001",
+        "spreadsheet_id": "sheet_admin",
+        "named_values": {
+            "Full Name": ["Alice Smith"],
+            "Email Address": ["alice.smith@enterprise.com"],
+            "Phone Number": ["+1-555-0144"],
+            "Company": ["Enterprise Global"],
+            "Service Requested": ["AI Integration"],
+            "Requirements": ["Need full-scale AI automated lead pipeline with CRM."],
+            "Budget": ["$50,000+"],
+            "Preferred Contact": ["Phone"],
+            "Consent": ["Yes, I agree to email communications"],
+        },
+    }
+
+    response = client.post("/api/v1/leads/webhook/forms", json=payload, headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    lead_id = data["lead_id"]
+    assert lead_id.startswith("LF-")
+
+    # Verify exactly one email was sent, and it was to the administrator
+    calls = mock_services["send_email_calls"]
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["to_email"] == admin_addr
+    assert call["subject"] == "New Lead Received – Alice Smith"
+
+    # Verify all 10 required fields are present in the notification body
+    body = call["body"]
+    assert lead_id in body                       # 1. Lead ID
+    assert "Alice Smith" in body                 # 2. Full name
+    assert "alice.smith@enterprise.com" in body  # 3. Email address
+    assert "+1-555-0144" in body                 # 4. Phone number
+    assert "Enterprise Global" in body           # 5. Company name
+    assert "AI Integration" in body              # 6. Interested service
+    assert "Need full-scale AI automated lead pipeline with CRM." in body  # 7. Requirements
+    assert "$50,000+" in body                    # 8. Budget range
+    assert "phone" in body                       # 9. Preferred contact method
+    assert "Granted (Yes)" in body               # 10. Communication consent
+
+    # Verify HTML version also contains key elements
+    html = call["html_body"]
+    assert lead_id in html
+    assert "Alice Smith" in html
+    assert "alice.smith@enterprise.com" in html
+
+    # Verify database record in admin_notifications
+    assert temp_store.has_admin_notification_for_lead(lead_id) is True
+    assert temp_store.has_admin_notification(f"admin_notif_lead_{lead_id}") is True
+    notifs = temp_store.list_admin_notifications(lead_id=lead_id)
+    assert len(notifs) == 1
+    assert notifs[0]["recipient"] == admin_addr
+    assert notifs[0]["subject"] == "New Lead Received – Alice Smith"
+
+    # Customer email was NEVER sent
+    assert all(c["to_email"] != "alice.smith@enterprise.com" for c in calls)
+
+
+# ---------------------------------------------------------------------------
+# Test 18: Admin Notification Duplicate Prevention (Idempotency)
+# ---------------------------------------------------------------------------
+def test_18_admin_notification_duplicate_prevention(
+    client, auth_headers, mock_services, temp_store, monkeypatch
+):
+    admin_addr = "admin@example.org"
+    monkeypatch.setattr(settings, "ADMIN_NOTIFICATION_EMAIL", admin_addr)
+
+    payload = {
+        "submission_id": "sub_idem_check_001",
+        "named_values": {
+            "Full Name": ["Bob Taylor"],
+            "Email Address": ["bob.taylor@example.org"],
+            "Requirements": ["Requirements for idempotency testing of admin notifications."],
+        },
+    }
+
+    # First submission
+    res1 = client.post("/api/v1/leads/webhook/forms", json=payload, headers=auth_headers)
+    assert res1.status_code == 200
+    assert len(mock_services["send_email_calls"]) == 1
+
+    # Duplicate submission with same submission ID
+    res2 = client.post("/api/v1/leads/webhook/forms", json=payload, headers=auth_headers)
+    assert res2.status_code == 200
+    assert res2.json()["duplicate"] is True
+    # Email count must STILL be 1 (no duplicate notification sent)
+    assert len(mock_services["send_email_calls"]) == 1
+
+    # Direct re-call to notify_admin_of_new_lead must be idempotent
+    lead_id = res1.json()["lead_id"]
+    from app.services.form_service import notify_admin_of_new_lead
+    result = notify_admin_of_new_lead(
+        lead_id=lead_id,
+        normalized={
+            "name": "Bob Taylor",
+            "email": "bob.taylor@example.org",
+            "requirements": "Some reqs",
+        },
+        store=temp_store,
+    )
+    assert result["status"] == "duplicate_skipped"
+    assert len(mock_services["send_email_calls"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 19: Notification Failure Does Not Cause Submission Failure
+# ---------------------------------------------------------------------------
+def test_19_admin_notification_failure_does_not_fail_submission(
+    client, auth_headers, mock_services, monkeypatch
+):
+    admin_addr = "admin@example.org"
+    monkeypatch.setattr(settings, "ADMIN_NOTIFICATION_EMAIL", admin_addr)
+
+    # Mock send_email returning failure (e.g., SMTP or Gmail API error)
+    from app.services import gmail_service
+    monkeypatch.setattr(
+        gmail_service,
+        "send_email",
+        lambda **kwargs: {"success": False, "error_code": "QUOTA_EXCEEDED", "error_message": "Daily quota exceeded"},
+    )
+
+    payload = {
+        "submission_id": "sub_notif_fail_001",
+        "named_values": {
+            "Full Name": ["Carol Danvers"],
+            "Email Address": ["carol@example.com"],
+            "Requirements": ["Requirements when notification delivery fails."],
+        },
+    }
+
+    # Submission MUST succeed despite notification failure
+    response = client.post("/api/v1/leads/webhook/forms", json=payload, headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["lead_id"].startswith("LF-")
+
+    # Lead was still successfully appended to Google Sheets
+    assert len(mock_services["appended_leads"]) == 1
+    assert mock_services["appended_leads"][0]["name"] == "Carol Danvers"
+
+
+# ---------------------------------------------------------------------------
+# Test 20: Notification Exception Does Not Cause Submission Failure
+# ---------------------------------------------------------------------------
+def test_20_admin_notification_exception_does_not_fail_submission(
+    client, auth_headers, mock_services, monkeypatch
+):
+    admin_addr = "admin@example.org"
+    monkeypatch.setattr(settings, "ADMIN_NOTIFICATION_EMAIL", admin_addr)
+
+    # Mock send_email raising an unexpected exception
+    from app.services import gmail_service
+
+    def _exploding_send(**kwargs):
+        raise RuntimeError("Transient network outage connecting to Gmail API")
+
+    monkeypatch.setattr(gmail_service, "send_email", _exploding_send)
+
+    payload = {
+        "submission_id": "sub_notif_exc_001",
+        "named_values": {
+            "Full Name": ["David Banner"],
+            "Email Address": ["david@example.com"],
+            "Requirements": ["Testing unexpected exception resilience."],
+        },
+    }
+
+    response = client.post("/api/v1/leads/webhook/forms", json=payload, headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert len(mock_services["appended_leads"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 21: Admin Notification Skipped When Env Var Is Unset
+# ---------------------------------------------------------------------------
+def test_21_admin_notification_skipped_when_env_var_unset(
+    client, auth_headers, mock_services, monkeypatch
+):
+    monkeypatch.setattr(settings, "ADMIN_NOTIFICATION_EMAIL", None)
+
+    payload = {
+        "submission_id": "sub_no_admin_email_001",
+        "named_values": {
+            "Full Name": ["Eve Online"],
+            "Email Address": ["eve@example.com"],
+            "Requirements": ["Requirements when ADMIN_NOTIFICATION_EMAIL is not set."],
+        },
+    }
+
+    response = client.post("/api/v1/leads/webhook/forms", json=payload, headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    # No email sent to anyone
+    assert len(mock_services["send_email_calls"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# Test 22: Customer Is Never Automatically Emailed
+# ---------------------------------------------------------------------------
+def test_22_customer_is_never_automatically_emailed(
+    client, auth_headers, mock_services, monkeypatch
+):
+    admin_addr = "admin@leadflow.ai"
+    monkeypatch.setattr(settings, "ADMIN_NOTIFICATION_EMAIL", admin_addr)
+
+    payload = {
+        "submission_id": "sub_customer_safety_001",
+        "named_values": {
+            "Full Name": ["Frank Castle"],
+            "Email Address": ["frank@thepunisher.com"],
+            "Consent": ["Yes, definitely contact me via email immediately!"],
+            "Requirements": ["Verify customer is NEVER sent an email automatically."],
+        },
+    }
+
+    response = client.post("/api/v1/leads/webhook/forms", json=payload, headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["email_status"] == "PENDING"
+
+    # Exactly 1 call was made, and it went ONLY to the admin, NOT Frank
+    calls = mock_services["send_email_calls"]
+    assert len(calls) == 1
+    assert calls[0]["to_email"] == admin_addr
+    assert not any(c["to_email"] == "frank@thepunisher.com" for c in calls)
+
