@@ -1,10 +1,39 @@
-venv/
-__pycache__/
+# Environment and secrets
 .env
-*.pyc
-.pytest_cache/
-credentials/*.json
-credentials/*.pickle
+.env.*
+!.env.example
 
-credentials/gmail_oauth_client.json
-credentials/gmail_token.json
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Credentials and OAuth
+credentials/
+*token*.json
+*credentials*.json
+*.pickle
+
+# Databases and runtime data
+*.db
+*.sqlite
+*.sqlite3
+data/
+instance/
+
+# Frontend dependencies and builds
+node_modules/
+dist/
+coverage/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
