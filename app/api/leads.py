@@ -145,7 +145,6 @@ async def get_lead_communications(
     lead_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
-    authenticated: bool = Depends(verify_webhook_secret),
 ):
     try:
         result = await asyncio.to_thread(
@@ -237,7 +236,6 @@ def list_leads(
     sort_order: str = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
-    authenticated: bool = Depends(verify_webhook_secret),
 ):
     raw_leads, crm_synced = _fetch_crm_leads_safely()
 
@@ -330,7 +328,6 @@ def list_leads(
 @router.get("/{lead_id}", response_model=LeadDetailResponse)
 def get_lead_details(
     lead_id: str,
-    authenticated: bool = Depends(verify_webhook_secret),
 ):
     raw_leads, _ = _fetch_crm_leads_safely()
     lead = next(

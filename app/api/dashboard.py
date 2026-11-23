@@ -1,10 +1,9 @@
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.security import verify_webhook_secret
 from app.services.automation_service import automation_worker
 from app.services.automation_store import automation_store
 from app.services.gmail_intelligence_service import gmail_intelligence_service
@@ -59,9 +58,7 @@ class DashboardOverviewResponse(BaseModel):
 
 
 @router.get("/overview", response_model=DashboardOverviewResponse)
-def get_dashboard_overview(
-    authenticated: bool = Depends(verify_webhook_secret),
-):
+def get_dashboard_overview():
     counts = automation_store.get_overview_counts()
     leads, _ = _fetch_crm_leads_safely()
     total_leads = len(leads) if leads else counts.get("scores_total", 0)

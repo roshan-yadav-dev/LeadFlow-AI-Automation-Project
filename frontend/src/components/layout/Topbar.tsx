@@ -5,7 +5,6 @@ import {
   Menu,
   Moon,
   Sun,
-  LogOut,
   User,
   Activity,
   Cpu,
@@ -25,7 +24,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   workerRunning = true,
 }) => {
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   // Compute breadcrumbs
   const pathSegments = location.pathname.split('/').filter(Boolean);
@@ -94,7 +93,7 @@ export const Topbar: React.FC<TopbarProps> = ({
           {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
         </button>
 
-        {/* User Profile & Logout */}
+        {/* User Profile */}
         <div className="flex items-center gap-2 pl-2 border-l border-slate-200 dark:border-slate-800">
           <div className="hidden md:flex flex-col text-right">
             <span className="text-xs font-semibold text-slate-900 dark:text-white">
@@ -108,14 +107,6 @@ export const Topbar: React.FC<TopbarProps> = ({
           <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-950 flex items-center justify-center text-indigo-700 dark:text-indigo-300 font-bold text-xs border border-indigo-200 dark:border-indigo-800">
             <User className="w-4 h-4" />
           </div>
-
-          <button
-            onClick={() => logout()}
-            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition"
-            title="Sign out"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
         </div>
       </div>
     </header>

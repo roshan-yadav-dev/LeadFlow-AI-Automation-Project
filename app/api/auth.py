@@ -48,6 +48,21 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "127.0.0.1"
 
 
+@router.post("/direct-login", response_model=LoginResponse)
+def direct_login(request: Request, response: Response):
+    """
+    Direct login endpoint for streamlined operator dashboard access.
+    Creates a valid authenticated session for DASHBOARD_USERNAME without requiring manual password entry.
+    """
+    username = settings.DASHBOARD_USERNAME
+    session = dashboard_auth.create_session(username, response=response)
+    return {
+        "status": "authenticated",
+        "user": {"username": session.username, "role": "admin"},
+        "csrf_token": session.csrf_token,
+    }
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, request: Request, response: Response):
     client_ip = _get_client_ip(request)

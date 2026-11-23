@@ -35,7 +35,8 @@ import { ErrorBanner } from '../../components/common/ErrorBanner';
 import { EmptyState } from '../../components/common/EmptyState';
 
 export const LeadDetailPage: React.FC = () => {
-  const { leadId } = useParams<{ leadId: string }>();
+  const params = useParams<{ leadId?: string; id?: string }>();
+  const leadId = params.leadId || params.id;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('overview');

@@ -1,9 +1,7 @@
 import React from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from './hooks/useAuth';
+import { Routes, Route, Navigate } from 'react-router-dom';
 
 import { AppLayout } from './components/layout/AppLayout';
-import { LoginPage } from './pages/Login/LoginPage';
 import { DashboardPage } from './pages/Dashboard/DashboardPage';
 import { LeadsPage } from './pages/Leads/LeadsPage';
 import { LeadDetailPage } from './pages/Leads/LeadDetailPage';
@@ -17,57 +15,28 @@ import { JobsPage } from './pages/AutomationJobs/JobsPage';
 import { AuditLogsPage } from './pages/AuditLogs/AuditLogsPage';
 import { SettingsPage } from './pages/Settings/SettingsPage';
 
-interface ProtectedRouteProps {
-  children: React.ReactNode;
-}
-
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
-  const location = useLocation();
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="flex flex-col items-center space-y-4">
-          <div className="w-10 h-10 border-3 border-primary-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-medium text-slate-400">Verifying session...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  return <>{children}</>;
-};
-
 export const AppRoutes: React.FC = () => {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      {/* Direct dashboard access: redirect /login directly to root dashboard */}
+      <Route path="/login" element={<Navigate to="/" replace />} />
 
-      {/* Protected App Routes */}
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <AppLayout />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<Navigate to="/dashboard" replace />} />
+      {/* Main App Routes - Direct Access without Login */}
+      <Route path="/" element={<AppLayout />}>
+        <Route index element={<DashboardPage />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="leads" element={<LeadsPage />} />
+        <Route path="leads/:leadId" element={<LeadDetailPage />} />
         <Route path="leads/:id" element={<LeadDetailPage />} />
         <Route path="lead-scoring" element={<LeadScoringPage />} />
+        <Route path="scoring" element={<LeadScoringPage />} />
         <Route path="tasks" element={<TasksPage />} />
         <Route path="reminders" element={<RemindersPage />} />
         <Route path="workflows" element={<WorkflowsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="gmail" element={<GmailPage />} />
         <Route path="automation-jobs" element={<JobsPage />} />
+        <Route path="jobs" element={<JobsPage />} />
         <Route path="audit-logs" element={<AuditLogsPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
@@ -83,7 +52,7 @@ export const AppRoutes: React.FC = () => {
               The page you requested does not exist or may have been relocated.
             </p>
             <a
-              href="/dashboard"
+              href="/"
               className="px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition"
             >
               Return to Dashboard
