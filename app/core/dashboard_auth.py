@@ -121,12 +121,13 @@ class DashboardAuthManager:
 
         if response is not None:
             is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+            samesite_val = "none" if is_prod else "lax"
             response.set_cookie(
                 key=settings.SESSION_COOKIE_NAME,
                 value=session_id,
                 max_age=settings.SESSION_MAX_AGE_SECONDS,
                 httponly=True,
-                samesite="lax",
+                samesite=samesite_val,
                 secure=is_prod,
                 path="/",
             )
@@ -136,7 +137,7 @@ class DashboardAuthManager:
                 value=csrf_token,
                 max_age=settings.SESSION_MAX_AGE_SECONDS,
                 httponly=False,
-                samesite="lax",
+                samesite=samesite_val,
                 secure=is_prod,
                 path="/",
             )
@@ -157,7 +158,26 @@ class DashboardAuthManager:
             return session
 
     def get_session_from_request(self, request: Request) -> DashboardSession | None:
+        # 1. Check HttpOnly session cookie
         session_id = request.cookies.get(settings.SESSION_COOKIE_NAME)
+
+        # 2. Check Authorization header: Bearer <session_id>
+        if not session_id:
+            auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+            if auth_header:
+                parts = auth_header.split(None, 1)
+                if len(parts) == 2 and parts[0].lower() == "bearer":
+                    session_id = parts[1].strip()
+
+        # 3. Check custom session token headers
+        if not session_id:
+            session_id = (
+                request.headers.get("X-Session-ID")
+                or request.headers.get("x-session-id")
+                or request.headers.get("X-Session-Token")
+                or request.headers.get("x-session-token")
+            )
+
         return self.get_session(session_id)
 
     def revoke_session(self, session_id: str | None, response: Response | None = None) -> bool:
@@ -168,18 +188,19 @@ class DashboardAuthManager:
 
         if response is not None:
             is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+            samesite_val = "none" if is_prod else "lax"
             response.delete_cookie(
                 key=settings.SESSION_COOKIE_NAME,
                 path="/",
                 httponly=True,
-                samesite="lax",
+                samesite=samesite_val,
                 secure=is_prod,
             )
             response.delete_cookie(
                 key="leadflow_csrf",
                 path="/",
                 httponly=False,
-                samesite="lax",
+                samesite=samesite_val,
                 secure=is_prod,
             )
         return removed

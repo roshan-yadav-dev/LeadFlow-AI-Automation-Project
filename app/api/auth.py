@@ -31,6 +31,8 @@ class LoginResponse(BaseModel):
     status: str
     user: UserProfile
     csrf_token: str
+    token: str | None = None
+    session_id: str | None = None
 
 
 class AuthStatusResponse(BaseModel):
@@ -38,6 +40,8 @@ class AuthStatusResponse(BaseModel):
     authenticated: bool
     user: UserProfile | None = None
     csrf_token: str | None = None
+    token: str | None = None
+    session_id: str | None = None
 
 
 def _get_client_ip(request: Request) -> str:
@@ -60,6 +64,8 @@ def direct_login(request: Request, response: Response):
         "status": "authenticated",
         "user": {"username": session.username, "role": "admin"},
         "csrf_token": session.csrf_token,
+        "token": session.session_id,
+        "session_id": session.session_id,
     }
 
 
@@ -101,6 +107,8 @@ def login(payload: LoginRequest, request: Request, response: Response):
         "status": "authenticated",
         "user": {"username": session.username, "role": "admin"},
         "csrf_token": session.csrf_token,
+        "token": session.session_id,
+        "session_id": session.session_id,
     }
 
 
@@ -120,6 +128,8 @@ def get_current_user(request: Request):
             "authenticated": False,
             "user": None,
             "csrf_token": None,
+            "token": None,
+            "session_id": None,
         }
 
     return {
@@ -127,4 +137,6 @@ def get_current_user(request: Request):
         "authenticated": True,
         "user": {"username": session.username, "role": "admin"},
         "csrf_token": session.csrf_token,
+        "token": session.session_id,
+        "session_id": session.session_id,
     }

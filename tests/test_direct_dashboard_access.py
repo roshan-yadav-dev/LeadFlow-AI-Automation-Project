@@ -108,6 +108,68 @@ def test_automation_tasks_leaderboard_and_reminders_apis():
     assert r_rem_compat.status_code == 200
 
 
+def test_leaderboard_presentation_session_and_unauthorized_rejection():
+    """
+    Verification:
+    1. Direct login returns a valid presentation session token.
+    2. Unauthenticated requests to /api/v1/automation/scores/leaderboard return 401.
+    3. Requests with invalid Bearer token return 401.
+    4. Requests with valid Bearer token return 200.
+    5. Requests with valid X-Session-ID header return 200.
+    6. Requests with session cookie return 200.
+    """
+    client = TestClient(app)
+
+    # 1. Unauthenticated request -> 401
+    r_unauth = client.get("/api/v1/automation/scores/leaderboard")
+    assert r_unauth.status_code == 401
+    assert "Invalid webhook credentials" in r_unauth.json()["detail"]
+
+    # 2. Request with invalid Bearer token -> 401
+    r_bad_token = client.get(
+        "/api/v1/automation/scores/leaderboard",
+        headers={"Authorization": "Bearer invalid_presentation_token_999"},
+    )
+    assert r_bad_token.status_code == 401
+
+    # 3. Direct login creates presentation session and returns valid token
+    r_direct = client.post("/api/v1/auth/direct-login")
+    assert r_direct.status_code == 200
+    login_data = r_direct.json()
+    token = login_data.get("token")
+    assert token is not None
+    assert login_data.get("session_id") == token
+    assert login_data.get("status") == "authenticated"
+
+    # 4. Request using Bearer token without cookies -> 200
+    client_no_cookies = TestClient(app)
+    r_bearer = client_no_cookies.get(
+        "/api/v1/automation/scores/leaderboard",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r_bearer.status_code == 200
+    assert isinstance(r_bearer.json(), list)
+
+    # Also test compatibility path without /api/v1
+    r_bearer_compat = client_no_cookies.get(
+        "/automation/scores/leaderboard",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r_bearer_compat.status_code == 200
+    assert isinstance(r_bearer_compat.json(), list)
+
+    # 5. Request using X-Session-ID header -> 200
+    r_x_session = client_no_cookies.get(
+        "/api/v1/automation/scores/leaderboard",
+        headers={"X-Session-ID": token},
+    )
+    assert r_x_session.status_code == 200
+
+    # 6. Request using session cookie -> 200
+    r_cookie = client.get("/api/v1/automation/scores/leaderboard")
+    assert r_cookie.status_code == 200
+
+
 def test_cors_preflight_from_deployed_origin():
     """
     Verification Phase 4.10:

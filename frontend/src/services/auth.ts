@@ -1,4 +1,4 @@
-import api, { setMemoryCsrfToken } from './api';
+import api, { setMemoryCsrfToken, setMemoryToken } from './api';
 import { AuthStatusResponse, LoginResponse } from '../types/auth';
 
 export const authService = {
@@ -6,6 +6,10 @@ export const authService = {
     const res = await api.get<AuthStatusResponse>('/auth/me');
     if (res.data.csrf_token) {
       setMemoryCsrfToken(res.data.csrf_token);
+    }
+    const token = res.data.token || res.data.session_id;
+    if (token) {
+      setMemoryToken(token);
     }
     return res.data;
   },
@@ -15,6 +19,10 @@ export const authService = {
       const res = await api.post<LoginResponse>('/auth/direct-login');
       if (res.data.csrf_token) {
         setMemoryCsrfToken(res.data.csrf_token);
+      }
+      const token = res.data.token || res.data.session_id;
+      if (token) {
+        setMemoryToken(token);
       }
       return res.data;
     } catch {
@@ -31,12 +39,17 @@ export const authService = {
     if (res.data.csrf_token) {
       setMemoryCsrfToken(res.data.csrf_token);
     }
+    const token = res.data.token || res.data.session_id;
+    if (token) {
+      setMemoryToken(token);
+    }
     return res.data;
   },
 
   async logout(): Promise<{ status: string }> {
     const res = await api.post<{ status: string }>('/auth/logout');
     setMemoryCsrfToken(null);
+    setMemoryToken(null);
     return res.data;
   },
 };
