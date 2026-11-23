@@ -12,8 +12,20 @@ export function setMemoryCsrfToken(token: string | null) {
   memoryCsrfToken = token;
 }
 
+export function getApiBaseUrl(): string {
+  const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
+  if (!envUrl || typeof envUrl !== 'string') {
+    return '/api/v1';
+  }
+  const clean = envUrl.trim().replace(/\/+$/, '');
+  if (!clean.endsWith('/api/v1')) {
+    return `${clean}/api/v1`;
+  }
+  return clean;
+}
+
 export const api = axios.create({
-  baseURL: (import.meta as any).env?.VITE_API_BASE_URL || '/api/v1',
+  baseURL: getApiBaseUrl(),
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',

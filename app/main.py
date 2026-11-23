@@ -1,7 +1,7 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.leads import router as leads_router
@@ -50,10 +50,26 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def api_v1_compatibility_middleware(request: Request, call_next):
+    """
+    Ensure backwards and forwards compatibility for dashboard and API requests.
+    If a request is sent to /dashboard/..., /leads..., /automation/..., /gmail/..., /auth/...
+    without the /api/v1 prefix, transparently route it to /api/v1/...
+    """
+    path = request.scope.get("path", "")
+    api_prefixes = ("/dashboard", "/leads", "/automation", "/gmail", "/auth")
+    if not path.startswith("/api/v1") and any(path.startswith(prefix) for prefix in api_prefixes):
+        request.scope["path"] = f"/api/v1{path}"
+
+    return await call_next(request)
 
 
 @app.get("/")

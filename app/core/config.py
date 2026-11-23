@@ -171,5 +171,9 @@ class Settings:
         ).split(",")
         if orig.strip()
     ]
+    CORS_ORIGIN_REGEX = os.getenv(
+        "CORS_ORIGIN_REGEX",
+        r"https?://.*(onrender\.com|vercel\.app|netlify\.app|localhost|127\.0\.0\.1)(:\d+)?",
+    )
 
 settings = Settings()
