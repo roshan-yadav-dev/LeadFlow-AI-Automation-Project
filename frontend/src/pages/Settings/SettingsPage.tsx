@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { StatusBadge } from '../../components/common/StatusBadge';
 import { LoadingSkeleton } from '../../components/common/LoadingSkeleton';
+import { GmailConnectionCard } from '../../components/gmail/GmailConnectionCard';
 
 export const SettingsPage: React.FC = () => {
   const {
@@ -297,6 +298,9 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Gmail Outreach & OAuth Connection Card */}
+      <GmailConnectionCard />
 
       {/* Safety & Architecture Principles Card */}
       <div className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl p-6">

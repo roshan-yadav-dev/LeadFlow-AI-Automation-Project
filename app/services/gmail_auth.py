@@ -37,7 +37,7 @@ def _state_file(state: str) -> Path:
     return STATE_DIR / f"{state_hash}.json"
 
 
-def create_oauth_url():
+def create_oauth_url(frontend_url: str | None = None):
     flow = Flow.from_client_secrets_file(
         settings.GMAIL_CLIENT_SECRET_FILE,
         scopes=GMAIL_SCOPES,
@@ -53,12 +53,15 @@ def create_oauth_url():
         secrets.token_urlsafe(32)
     )
 
-    # Store the verifier server-side, not in the browser URL.
+    # Store the verifier and target frontend URL server-side, not in the browser URL.
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     state_path = _state_file(signed_state)
 
     state_path.write_text(
-        json.dumps({"code_verifier": code_verifier})
+        json.dumps({
+            "code_verifier": code_verifier,
+            "frontend_url": frontend_url,
+        })
     )
     os.chmod(state_path, 0o600)
 
@@ -113,7 +116,7 @@ def complete_oauth(authorization_response: str, state: str):
     os.chmod(token_path, 0o600)
 
     logger.info("Gmail OAuth authorization completed")
-    return credentials
+    return credentials, state_data
 
 
 def get_gmail_credentials():

@@ -328,3 +328,150 @@ def test_google_forms_webhook_submission_and_appearance_in_dashboard():
         assert det2.json()["lead_id"] == created_lead_id
     finally:
         monkeypatch.undo()
+
+
+def test_gmail_status_and_connect_endpoints():
+    """
+    Verification Phase 5.1, 5.2, 5.3:
+    1. GET /api/v1/gmail/status returns accurate connection structure.
+    2. POST /api/v1/gmail/connect returns Google OAuth consent URL.
+    3. GET /api/v1/gmail/authorize issues 302 Redirect to Google OAuth consent page.
+    """
+    client = TestClient(app)
+
+    # 1. Status check with and without /api/v1
+    r_status = client.get("/api/v1/gmail/status")
+    assert r_status.status_code == 200
+    status_data = r_status.json()
+    assert "connected" in status_data
+    assert isinstance(status_data["connected"], bool)
+
+    r_status_compat = client.get("/gmail/status")
+    assert r_status_compat.status_code == 200
+    assert r_status_compat.json() == status_data
+
+    # 2. Connect endpoint (POST and GET) returns authorization URL
+    r_connect = client.post("/api/v1/gmail/connect", headers={"Origin": "https://leadflow-ai-frontend.onrender.com"})
+    assert r_connect.status_code == 200
+    connect_data = r_connect.json()
+    assert connect_data["status"] == "pending_authorization"
+    assert "authorization_url" in connect_data
+    auth_url = connect_data["authorization_url"]
+    assert "accounts.google.com" in auth_url
+    assert "response_type=code" in auth_url
+    assert "gmail.send" in auth_url
+
+    # Connect compatibility path
+    r_connect_compat = client.post("/gmail/connect")
+    assert r_connect_compat.status_code == 200
+    assert "authorization_url" in r_connect_compat.json()
+
+    # 3. Direct GET /authorize returns 302 redirect
+    r_auth = client.get("/api/v1/gmail/authorize", follow_redirects=False)
+    assert r_auth.status_code == 302
+    assert "accounts.google.com" in r_auth.headers.get("location", "")
+
+
+def test_gmail_oauth_callback_handling():
+    """
+    Verification Phase 5.4, 5.5:
+    Confirms callback handles error and success states and redirects back to frontend dashboard.
+    """
+    client = TestClient(app)
+
+    # 1. Error callback redirects to frontend with error parameter
+    r_err = client.get(
+        "/api/v1/gmail/oauth/callback?state=invalid_test_state&error=access_denied",
+        headers={"Referer": "https://leadflow-ai-frontend.onrender.com/dashboard"},
+        follow_redirects=False,
+    )
+    assert r_err.status_code == 302
+    loc = r_err.headers.get("location", "")
+    assert "gmail_status=error" in loc
+    assert "access_denied" in loc
+
+    # 2. Missing code redirects to frontend with missing_code parameter
+    r_missing = client.get(
+        "/api/v1/gmail/oauth/callback?state=invalid_test_state",
+        headers={"Referer": "https://leadflow-ai-frontend.onrender.com"},
+        follow_redirects=False,
+    )
+    assert r_missing.status_code == 302
+    assert "missing_code" in r_missing.headers.get("location", "")
+
+
+def test_email_sending_workflow_guardrails(monkeypatch):
+    """
+    Verification Phase 4:
+    Confirms email delivery workflow checks:
+    1. Human approval requirement is strictly enforced (non-approved draft cannot be sent).
+    2. Disconnected Gmail prevents sending and records informative error.
+    3. Duplicate send protection is preserved.
+    """
+    from app.services.email_delivery_service import (
+        email_delivery_service,
+        DraftNotApprovedError,
+        GmailDeliveryError,
+    )
+    from app.services.automation_store import automation_store
+
+    test_lead_id = f"LF-TEST-{int(time.time())}"
+    draft = automation_store.create_email_draft(
+        lead_id=test_lead_id,
+        recipient="lead@example.com",
+        subject="Follow-up Inquiry",
+        body="Thank you for contacting us.",
+        preferred_contact="email",
+        consent=True,
+    )
+    draft_id = draft["id"]
+
+    # 1. Cannot send draft in PENDING_APPROVAL status
+    with pytest.raises(DraftNotApprovedError):
+        email_delivery_service.send_approved_draft(draft_id=draft_id, actor="operator")
+
+    # 2. Approve draft
+    from app.services import email_delivery_service as eds_module
+    monkeypatch.setattr(eds_module, "update_lead_email_status", lambda **kwargs: True)
+    email_delivery_service.approve_draft(draft_id=draft_id, reviewed_by="operator")
+
+    # 3. Disconnected Gmail blocks dispatch with clear diagnostic
+    monkeypatch.setattr(eds_module, "is_gmail_connected", lambda: False)
+
+    with pytest.raises(GmailDeliveryError) as exc_info:
+        email_delivery_service.send_approved_draft(draft_id=draft_id, actor="operator")
+    assert "Gmail is not connected or its credentials are invalid" in str(exc_info.value)
+
+    # Verify draft record updated to FAILED with explanation
+    failed_draft = automation_store.get_email_draft(draft_id)
+    assert failed_draft["status"] == "FAILED"
+    assert "Gmail is not connected" in failed_draft["error_message"]
+
+    # 4. When Gmail IS connected, approved draft sends successfully
+    monkeypatch.setattr(eds_module, "is_gmail_connected", lambda: True)
+    monkeypatch.setattr(
+        eds_module,
+        "send_email",
+        lambda **kwargs: {"success": True, "message_id": "msg_mock_999", "thread_id": "th_mock_999"},
+    )
+
+    # Create another draft and approve it
+    draft2 = automation_store.create_email_draft(
+        lead_id=f"LF-TEST-2-{int(time.time())}",
+        recipient="lead2@example.com",
+        subject="Follow-up Inquiry 2",
+        body="Thank you for contacting us.",
+        preferred_contact="email",
+        consent=True,
+    )
+    draft2_id = draft2["id"]
+    email_delivery_service.approve_draft(draft_id=draft2_id, reviewed_by="operator")
+
+    send_res = email_delivery_service.send_approved_draft(draft_id=draft2_id, actor="operator")
+    assert send_res["status"] == "SENT"
+    assert send_res["message_id"] == "msg_mock_999"
+
+    # 5. Duplicate send is blocked
+    from app.services.email_delivery_service import DuplicateSendError
+    with pytest.raises(DuplicateSendError):
+        email_delivery_service.send_approved_draft(draft_id=draft2_id, actor="operator")

@@ -28,6 +28,7 @@ import { TableSkeleton } from '../../components/common/LoadingSkeleton';
 import { EmptyState } from '../../components/common/EmptyState';
 import { ErrorBanner } from '../../components/common/ErrorBanner';
 import { Modal } from '../../components/common/Modal';
+import { GmailConnectionCard } from '../../components/gmail/GmailConnectionCard';
 
 export const GmailPage: React.FC = () => {
   const queryClient = useQueryClient();
@@ -165,6 +166,9 @@ export const GmailPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Gmail OAuth Connection Banner */}
+      <GmailConnectionCard />
 
       {/* Intelligence Counters */}
       {overview && (

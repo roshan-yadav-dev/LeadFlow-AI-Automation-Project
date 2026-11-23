@@ -175,5 +175,6 @@ class Settings:
         "CORS_ORIGIN_REGEX",
         r"https?://.*(onrender\.com|vercel\.app|netlify\.app|localhost|127\.0\.0\.1)(:\d+)?",
     )
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 settings = Settings()

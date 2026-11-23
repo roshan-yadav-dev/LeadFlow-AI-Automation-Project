@@ -36,6 +36,7 @@ import { ErrorBanner } from '../../components/common/ErrorBanner';
 import { EmptyState } from '../../components/common/EmptyState';
 import { DateTimeDisplay } from '../../components/common/DateTimeDisplay';
 import { StatusBadge } from '../../components/common/StatusBadge';
+import { GmailConnectionCard } from '../../components/gmail/GmailConnectionCard';
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
@@ -166,6 +167,9 @@ export const DashboardPage: React.FC = () => {
           onClick={() => navigate('/workflows?tab=executions')}
         />
       </div>
+
+      {/* Gmail Outreach & Ingestion Engine Section */}
+      <GmailConnectionCard />
 
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

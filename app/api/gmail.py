@@ -17,10 +17,14 @@ from app.models.gmail import (
     GmailMatchResponse,
     GmailMessageListResponse,
 )
+import json
+from urllib.parse import quote_plus, urlparse
+
 from app.services.gmail_auth import (
     create_oauth_url,
     complete_oauth,
-    is_gmail_connected
+    is_gmail_connected,
+    _state_file,
 )
 from app.services.gmail_sync_service import (
     sync_inbox,
@@ -38,23 +42,68 @@ router = APIRouter(
 logger = logging.getLogger("leadflow")
 
 
-@router.get("/authorize")
-def authorize_gmail():
+def _extract_frontend_url(request: Request, redirect_to: str | None = None) -> str | None:
+    origin = redirect_to or request.headers.get("origin") or request.headers.get("referer")
+    if origin:
+        parsed = urlparse(origin)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    frontend_cfg = getattr(settings, "FRONTEND_URL", None)
+    if frontend_cfg:
+        parsed = urlparse(frontend_cfg)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    return None
+
+
+@router.post("/connect")
+@router.get("/connect")
+def connect_gmail(
+    request: Request,
+    redirect_to: str | None = Query(None),
+):
+    """
+    Initiate Gmail OAuth authorization flow.
+    Returns authorization URL for frontend navigation.
+    """
     try:
-        authorization_url, _ = create_oauth_url()
+        frontend_url = _extract_frontend_url(request, redirect_to=redirect_to)
+        authorization_url, _ = create_oauth_url(frontend_url=frontend_url)
+
+        return {
+            "status": "pending_authorization",
+            "authorization_url": authorization_url,
+            "url": authorization_url,
+        }
+
+    except Exception as exc:
+        logger.exception("Gmail authorization initialization failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to initialize Gmail authorization: {exc}",
+        )
+
+
+@router.get("/authorize")
+def authorize_gmail(
+    request: Request,
+    redirect_to: str | None = Query(None),
+):
+    try:
+        frontend_url = _extract_frontend_url(request, redirect_to=redirect_to)
+        authorization_url, _ = create_oauth_url(frontend_url=frontend_url)
 
         return RedirectResponse(
             url=authorization_url,
-            status_code=302
+            status_code=302,
         )
 
     except Exception:
         logger.exception("Gmail authorization initialization failed")
         raise HTTPException(
             status_code=500,
-            detail="Unable to initialize Gmail authorization"
+            detail="Unable to initialize Gmail authorization",
         )
-
 
 
 @router.get("/oauth/callback")
@@ -64,13 +113,42 @@ def gmail_oauth_callback(
     code: str = Query(None),
     error: str = Query(None),
 ):
+    frontend_url = None
+    try:
+        state_path = _state_file(state)
+        if state_path.exists():
+            data = json.loads(state_path.read_text())
+            frontend_url = data.get("frontend_url")
+    except Exception:
+        pass
+
+    if not frontend_url:
+        frontend_url = _extract_frontend_url(request)
+
+    accept = request.headers.get("accept", "")
+    wants_json = "application/json" in accept and "text/html" not in accept
+
     if error:
+        logger.warning("Gmail OAuth callback received error: %s", error)
+        if frontend_url and not wants_json:
+            clean_front = frontend_url.rstrip("/")
+            return RedirectResponse(
+                url=f"{clean_front}/?gmail_status=error&gmail_error={quote_plus(error)}",
+                status_code=302,
+            )
         raise HTTPException(
             status_code=400,
             detail=f"Google authorization failed: {error}",
         )
 
     if not code:
+        logger.warning("Gmail OAuth callback missing authorization code")
+        if frontend_url and not wants_json:
+            clean_front = frontend_url.rstrip("/")
+            return RedirectResponse(
+                url=f"{clean_front}/?gmail_status=error&gmail_error=missing_code",
+                status_code=302,
+            )
         raise HTTPException(
             status_code=400,
             detail="Authorization code is missing",
@@ -82,6 +160,13 @@ def gmail_oauth_callback(
             state=state,
         )
 
+        if frontend_url and not wants_json:
+            clean_front = frontend_url.rstrip("/")
+            return RedirectResponse(
+                url=f"{clean_front}/?gmail_status=connected",
+                status_code=302,
+            )
+
         return {
             "status": "connected",
             "message": "Gmail authorization completed successfully",
@@ -89,6 +174,12 @@ def gmail_oauth_callback(
 
     except Exception:
         logger.exception("Gmail OAuth callback failed")
+        if frontend_url and not wants_json:
+            clean_front = frontend_url.rstrip("/")
+            return RedirectResponse(
+                url=f"{clean_front}/?gmail_status=error&gmail_error=authorization_failed",
+                status_code=302,
+            )
         raise HTTPException(
             status_code=400,
             detail="Gmail authorization failed. Check server logs.",

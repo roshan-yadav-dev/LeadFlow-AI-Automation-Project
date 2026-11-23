@@ -5,11 +5,20 @@ import {
   GmailIntelligenceDetail,
   GmailMatchResponse,
   GmailAnalyzeResponse,
+  GmailStatusResponse,
+  GmailConnectResponse,
 } from '../types/gmail';
 
 export const gmailService = {
-  async getStatus(): Promise<{ connected: boolean; sender: string | null }> {
-    const res = await api.get<{ connected: boolean; sender: string | null }>('/gmail/status');
+  async getStatus(): Promise<GmailStatusResponse> {
+    const res = await api.get<GmailStatusResponse>('/gmail/status');
+    return res.data;
+  },
+
+  async connect(redirectTo?: string): Promise<GmailConnectResponse> {
+    const res = await api.post<GmailConnectResponse>('/gmail/connect', null, {
+      params: redirectTo ? { redirect_to: redirectTo } : undefined,
+    });
     return res.data;
   },
 

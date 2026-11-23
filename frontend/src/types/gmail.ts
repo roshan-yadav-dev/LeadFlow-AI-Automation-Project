@@ -80,3 +80,14 @@ export interface GmailAnalyzeResponse {
   failed: number;
   skipped: number;
 }
+
+export interface GmailStatusResponse {
+  connected: boolean;
+  sender: string | null;
+}
+
+export interface GmailConnectResponse {
+  status: string;
+  authorization_url: string;
+  url: string;
+}
